@@ -170,7 +170,7 @@ func (c *StreamableHTTP) SendRequest(
 
 	if request.Method == initializeMethod {
 		// Check if we got a session ID in the response
-		if sessionID := resp.Header.Get("Mcp-Session-Id"); sessionID != "" {
+		if sessionID := resp.Header.Get(headerKeySessionID); sessionID != "" {
 			c.sessionID.Store(sessionID)
 		} else {
 			return nil, fmt.Errorf("invalid response: initialize request should return a session ID")
@@ -307,7 +307,8 @@ func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, hand
 
 func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.JSONRPCNotification) error {
 
-	if c.sessionID == "" {
+	sessionID := c.sessionID.Load()
+	if sessionID == nil {
 		return fmt.Errorf("no session ID")
 	}
 
@@ -325,7 +326,7 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Mcp-Session-Id", c.sessionID)
+	req.Header.Set(headerKeySessionID, sessionID.(string))
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
 	}
