@@ -62,6 +62,7 @@ func NewStreamableHTTP(baseURL string, options ...StreamableHTTPCOption) (*Strea
 		headers:    make(map[string]string),
 		closed:     make(chan struct{}),
 	}
+	smc.sessionID.Store("") // set initial value to simplify later usage
 
 	for _, opt := range options {
 		opt(smc)
@@ -85,7 +86,7 @@ func (c *StreamableHTTP) Close() error {
 	}
 	// Cancel all in-flight requests
 	close(c.closed)
-	c.sessionID.Store(nil)
+	c.sessionID.Store("")
 	return nil
 }
 
@@ -135,7 +136,7 @@ func (c *StreamableHTTP) SendRequest(
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
-	if v := c.sessionID.Load(); v != nil {
+	if v := c.sessionID.Load(); v != "" {
 		req.Header.Set(headerKeySessionID, v.(string))
 	}
 	for k, v := range c.headers {
@@ -154,7 +155,7 @@ func (c *StreamableHTTP) SendRequest(
 		// handle session closed
 		if resp.StatusCode == http.StatusNotFound {
 			sessionID := req.Header.Get(headerKeySessionID)
-			if sessionID != "" && c.sessionID.CompareAndSwap(sessionID, nil) {
+			if sessionID != "" && c.sessionID.CompareAndSwap(sessionID, "") {
 				return nil, fmt.Errorf("session ID not found (Session may be closed). initialize needs to be called again")
 			}
 		}
