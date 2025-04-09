@@ -86,7 +86,28 @@ func (c *StreamableHTTP) Close() error {
 	}
 	// Cancel all in-flight requests
 	close(c.closed)
-	c.sessionID.Store("")
+	
+	sessionId := c.sessionID.Load().(string)
+	if sessionId != "" {
+		c.sessionID.Store("")
+
+		// notify server session closed
+		go func() {
+			req, err := http.NewRequest(http.MethodDelete, c.baseURL.String(), nil)
+			if err != nil {
+				fmt.Printf("failed to create close request\n: %v", err)
+				return
+			}
+			req.Header.Set(headerKeySessionID, sessionId)
+			res, err := c.httpClient.Do(req)
+			if err != nil {
+				fmt.Printf("failed to send close request\n: %v", err)
+				return
+			}
+			res.Body.Close()
+		}()
+	}
+
 	return nil
 }
 
@@ -102,10 +123,6 @@ func (c *StreamableHTTP) SendRequest(
 	request JSONRPCRequest,
 ) (*JSONRPCResponse, error) {
 
-	if request.Method != initializeMethod && c.sessionID.Load() == nil {
-		return nil, fmt.Errorf("no session ID. please call initialize first")
-	}
-
 	// Create a combined context that could be canceled when the client is closed
 	var cancelRequest context.CancelFunc
 	ctx, cancelRequest = context.WithCancel(ctx)
@@ -120,6 +137,7 @@ func (c *StreamableHTTP) SendRequest(
 	}()
 
 	id := c.requestID.Add(1)
+	request.ID = id
 
 	// Marshal request
 	requestBody, err := json.Marshal(request)
@@ -136,8 +154,9 @@ func (c *StreamableHTTP) SendRequest(
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
-	if v := c.sessionID.Load(); v != "" {
-		req.Header.Set(headerKeySessionID, v.(string))
+	sessionID := c.sessionID.Load()
+	if sessionID != "" {
+		req.Header.Set(headerKeySessionID, sessionID.(string))
 	}
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
@@ -154,10 +173,8 @@ func (c *StreamableHTTP) SendRequest(
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		// handle session closed
 		if resp.StatusCode == http.StatusNotFound {
-			sessionID := req.Header.Get(headerKeySessionID)
-			if sessionID != "" && c.sessionID.CompareAndSwap(sessionID, "") {
-				return nil, fmt.Errorf("session ID not found (Session may be closed). initialize needs to be called again")
-			}
+			c.sessionID.CompareAndSwap(sessionID, "")
+			return nil, fmt.Errorf("session terminated (404)")
 		}
 
 		// handle error response
@@ -170,11 +187,10 @@ func (c *StreamableHTTP) SendRequest(
 	}
 
 	if request.Method == initializeMethod {
-		// Check if we got a session ID in the response
+		// saved the received session ID in the response
+		// empty session ID is allowed
 		if sessionID := resp.Header.Get(headerKeySessionID); sessionID != "" {
 			c.sessionID.Store(sessionID)
-		} else {
-			return nil, fmt.Errorf("invalid response: initialize request should return a session ID")
 		}
 	}
 
@@ -196,7 +212,7 @@ func (c *StreamableHTTP) SendRequest(
 
 	case "text/event-stream":
 		// Server is using SSE for streaming responses
-		return c.handleSSEResponse(ctx, resp.Body, id)
+		return c.handleSSEResponse(ctx, resp.Body)
 
 	default:
 		return nil, fmt.Errorf("unexpected content type: %s", resp.Header.Get("Content-Type"))
@@ -205,7 +221,7 @@ func (c *StreamableHTTP) SendRequest(
 
 // handleSSEResponse processes an SSE stream for a specific request.
 // It returns the final result for the request once received, or an error.
-func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCloser, requestID int64) (*JSONRPCResponse, error) {
+func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCloser) (*JSONRPCResponse, error) {
 
 	// Create a channel for this specific request
 	responseChan := make(chan *JSONRPCResponse, 1)
@@ -217,7 +233,10 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 	// Start a goroutine to process the SSE stream
 	go c.readSSE(ctx, reader, func(event, data string) {
 
-		// (batch not supported yet)
+		// unsupported
+		// - batching
+		// - server -> client request
+
 		var message JSONRPCResponse
 		if err := json.Unmarshal([]byte(data), &message); err != nil {
 			fmt.Printf("failed to unmarshal message: %v", err)
@@ -308,11 +327,6 @@ func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, hand
 
 func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.JSONRPCNotification) error {
 
-	sessionID := c.sessionID.Load()
-	if sessionID == nil {
-		return fmt.Errorf("no session ID")
-	}
-
 	// Marshal request
 	requestBody, err := json.Marshal(notification)
 	if err != nil {
@@ -327,7 +341,9 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(headerKeySessionID, sessionID.(string))
+	if sessionID := c.sessionID.Load(); sessionID != "" {
+		req.Header.Set(headerKeySessionID, sessionID.(string))
+	}
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
 	}
