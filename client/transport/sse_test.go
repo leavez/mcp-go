@@ -74,13 +74,13 @@ func startMockSSEEchoServer() (string, func()) {
 		case "debug/echo_notification":
 			response["result"] = request
 			// send notification to client
-			responseBytes, _ := json.Marshal(map[string]any{
+			notificationBytes, _ := json.Marshal(map[string]any{
 				"jsonrpc": "2.0",
 				"method":  "debug/test",
 				"params":  request,
 			})
 			mu.Lock()
-			fmt.Fprintf(sseWriter, "event: message\ndata: %s\n\n", responseBytes)
+			fmt.Fprintf(sseWriter, "event: message\ndata: %s\n\n", notificationBytes)
 			flush.Flush()
 			mu.Unlock()
 		case "debug/echo_error_string":
@@ -357,6 +357,7 @@ func TestSSE(t *testing.T) {
 
 		if reps.Error == nil {
 			t.Errorf("Expected error, got nil")
+			return
 		}
 
 		var responseError JSONRPCRequest
