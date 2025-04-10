@@ -40,7 +40,6 @@ type StreamableHTTP struct {
 	headers    map[string]string
 
 	sessionID atomic.Value // string
-	requestID atomic.Int64
 
 	notificationHandler func(mcp.JSONRPCNotification)
 	notifyMu            sync.RWMutex
@@ -86,7 +85,7 @@ func (c *StreamableHTTP) Close() error {
 	}
 	// Cancel all in-flight requests
 	close(c.closed)
-	
+
 	sessionId := c.sessionID.Load().(string)
 	if sessionId != "" {
 		c.sessionID.Store("")
@@ -135,9 +134,6 @@ func (c *StreamableHTTP) SendRequest(
 			// The original context was canceled, no need to do anything
 		}
 	}()
-
-	id := c.requestID.Add(1)
-	request.ID = id
 
 	// Marshal request
 	requestBody, err := json.Marshal(request)
