@@ -54,11 +54,10 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 	}
 
 	smc := &SSE{
-		baseURL:      parsedURL,
-		httpClient:   &http.Client{},
-		responses:    make(map[int64]chan *JSONRPCResponse),
-		endpointChan: make(chan struct{}),
-		headers:      make(map[string]string),
+		baseURL:    parsedURL,
+		httpClient: &http.Client{},
+		responses:  make(map[int64]chan *JSONRPCResponse),
+		headers:    make(map[string]string),
 	}
 
 	for _, opt := range options {
@@ -103,6 +102,9 @@ func (c *SSE) Start(ctx context.Context) error {
 		resp.Body.Close()
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
+
+	c.endpointChan = make(chan struct{})
+	defer close(c.endpointChan)
 
 	go c.readSSE(resp.Body)
 
@@ -184,7 +186,7 @@ func (c *SSE) handleSSEEvent(event, data string) {
 			return
 		}
 		c.endpoint = endpoint
-		close(c.endpointChan)
+		c.endpointChan <- struct{}{}
 
 	case "message":
 		var baseMessage JSONRPCResponse
