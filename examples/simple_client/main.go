@@ -17,12 +17,12 @@ import (
 func main() {
 	// Define command line flags
 	stdioCmd := flag.String("stdio", "", "Command to execute for stdio transport (e.g. 'python server.py')")
-	sseURL := flag.String("sse", "", "URL for SSE transport (e.g. 'http://localhost:8080/sse')")
+	httpURL := flag.String("http", "", "URL for Streamable HTTP transport (e.g. 'http://localhost:8080/mcp')")
 	flag.Parse()
 
 	// Validate flags
-	if (*stdioCmd == "" && *sseURL == "") || (*stdioCmd != "" && *sseURL != "") {
-		fmt.Println("Error: You must specify exactly one of --stdio or --sse")
+	if (*stdioCmd == "" && *httpURL == "") || (*stdioCmd != "" && *httpURL != "") {
+		fmt.Println("Error: You must specify exactly one of --stdio or --http")
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -47,18 +47,13 @@ func main() {
 		// Create command and stdio transport
 		command := args[0]
 		cmdArgs := args[1:]
-		
+
 		// Create stdio transport with verbose logging
 		stdioTransport := transport.NewStdio(command, nil, cmdArgs...)
-		
-		// Start the transport
-		if err := stdioTransport.Start(ctx); err != nil {
-			log.Fatalf("Failed to start stdio transport: %v", err)
-		}
-		
+
 		// Create client with the transport
 		c = client.NewClient(stdioTransport)
-		
+
 		// Set up logging for stderr if available
 		if stderr, ok := client.GetStderr(c); ok {
 			go func() {
@@ -78,20 +73,20 @@ func main() {
 			}()
 		}
 	} else {
-		fmt.Println("Initializing SSE client...")
-		// Create SSE transport
-		sseTransport, err := transport.NewSSE(*sseURL)
+		fmt.Println("Initializing Streamable HTTP client...")
+		// Create Streamable HTTP transport
+		trans, err := transport.NewStreamableHTTP(*httpURL)
 		if err != nil {
-			log.Fatalf("Failed to create SSE transport: %v", err)
+			log.Fatalf("Failed to create transport: %v", err)
 		}
-		
-		// Start the transport
-		if err := sseTransport.Start(ctx); err != nil {
-			log.Fatalf("Failed to start SSE transport: %v", err)
-		}
-		
+
 		// Create client with the transport
-		c = client.NewClient(sseTransport)
+		c = client.NewClient(trans)
+	}
+
+	// Start the client
+	if err := c.Start(ctx); err != nil {
+		log.Fatalf("Failed to create transport: %v", err)
 	}
 
 	// Set up notification handler
@@ -108,15 +103,15 @@ func main() {
 		Version: "1.0.0",
 	}
 	initRequest.Params.Capabilities = mcp.ClientCapabilities{}
-	
+
 	serverInfo, err := c.Initialize(ctx, initRequest)
 	if err != nil {
 		log.Fatalf("Failed to initialize: %v", err)
 	}
 
 	// Display server information
-	fmt.Printf("Connected to server: %s (version %s)\n", 
-		serverInfo.ServerInfo.Name, 
+	fmt.Printf("Connected to server: %s (version %s)\n",
+		serverInfo.ServerInfo.Name,
 		serverInfo.ServerInfo.Version)
 	fmt.Printf("Server capabilities: %+v\n", serverInfo.Capabilities)
 
