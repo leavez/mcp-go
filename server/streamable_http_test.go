@@ -666,6 +666,8 @@ func TestStreamableHTTP_SessionWithTools(t *testing.T) {
 		if _, exists := retrievedTools["final_tool"]; !exists {
 			t.Error("Expected final_tool to exist")
 		}
+
+		// 
 	})
 }
 
